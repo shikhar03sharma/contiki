@@ -74,7 +74,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 /*---------------------------------------------------------------------------*/
-#define DEBUG DEBUG_NONE
+#define DEBUG DEBUG_FULL
 #include "net/ip/uip-debug.h"
 /*---------------------------------------------------------------------------*/
 #define REMOTE_PORT  7777
@@ -82,7 +82,11 @@
 
 #define set_dest_addr() uip_ip6addr(&remote_addr, \
                                     0xBBBB, 0x0000, 0x0000, 0x0000, \
-                                    0x3E07, 0x54FF, 0xFE74, 0x4885);
+                                    0xCC66, 0x446B, 0xDA40, 0x2172);
+// #define set_dest_addr() uip_ip6addr(&remote_addr, \
+//                                     0xFE80, 0x0000, 0x0000, 0x0000, \
+//                                     0x0212, 0x4B00, 0x0D77, 0x5D81);
+
 /*---------------------------------------------------------------------------*/
 #define ADDRESS_CONVERSION_OK       1
 #define ADDRESS_CONVERSION_ERROR    0
@@ -140,6 +144,19 @@ net_input(void)
     /* Copy data */
     memcpy(buffer, uip_appdata, msg_len);
     printf("%s", (char *)buffer);
+
+            memset(buffer, 0, MAX_MSG_SIZE);
+
+        /* We need to add a line feed, thus never fill the entire buffer */
+
+        /* Add a line feed */
+        buffer[msg_len] = 0x0A;
+        msg_len++;
+
+        uip_udp_packet_sendto(
+          udp_conn, buffer, msg_len, &remote_addr,
+          UIP_HTONS(cc26xx_web_demo_config.net_uart.remote_port));
+        printf("sending udp packet of %d bytes\n",msg_len);
   }
 
   return;
@@ -241,19 +258,20 @@ set_config_defaults(void)
 {
   /* Set a hard-coded destination address to start with */
   set_dest_addr();
-
+  printf("Setting IP\n");
   /* Set config defaults */
   cc26xx_web_demo_ipaddr_sprintf(cc26xx_web_demo_config.net_uart.remote_address,
                                  NET_UART_IP_ADDR_STRLEN, &remote_addr);
   cc26xx_web_demo_config.net_uart.remote_port = REMOTE_PORT;
   cc26xx_web_demo_config.net_uart.enable = 1;
+  keep_uart_on();
 }
 /*---------------------------------------------------------------------------*/
 PROCESS_THREAD(net_uart_process, ev, data)
 {
   PROCESS_BEGIN();
 
-  printf("CC26XX Net UART Process\n");
+  printf("CC26XX Net UART Process new\n");
 
   set_config_defaults();
 
@@ -274,6 +292,7 @@ PROCESS_THREAD(net_uart_process, ev, data)
     PROCESS_YIELD();
 
     if(ev == serial_line_event_message) {
+      printf("Got serial message\n");
       /*
        * If the message contains a new IP address, save it and go back to
        * waiting.
@@ -293,9 +312,12 @@ PROCESS_THREAD(net_uart_process, ev, data)
         uip_udp_packet_sendto(
           udp_conn, buffer, msg_len, &remote_addr,
           UIP_HTONS(cc26xx_web_demo_config.net_uart.remote_port));
+        printf("sending udp packet of %d bytes\n",msg_len);
       }
     } else if(ev == tcpip_event) {
+      printf("TCP/IP event\n");
       net_input();
+
     } else if(ev == cc26xx_web_demo_config_loaded_event) {
       /*
        * New config. Check if it's possible to update the remote address.

@@ -41,6 +41,9 @@
 #include "contiki-net.h"
 #include "rest-engine.h"
 #include "board-peripherals.h"
+#include "net/ip/uip.h"
+#include "net/ip/uip-udp-packet.h"
+#include "net/ip/uiplib.h"
 #include "lib/sensors.h"
 #include "lib/list.h"
 #include "sys/process.h"
@@ -51,6 +54,8 @@
 #include "cc26xx-web-demo.h"
 #include "mqtt-client.h"
 #include "coap-server.h"
+#include "net/netstack.h"
+#include "net/packetbuf.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,7 +68,7 @@ PROCESS(cc26xx_web_demo_process, "CC26XX Web Demo");
  * Update sensor readings in a staggered fashion every SENSOR_READING_PERIOD
  * ticks + a random interval between 0 and SENSOR_READING_RANDOM ticks
  */
-#define SENSOR_READING_PERIOD (CLOCK_SECOND * 20)
+#define SENSOR_READING_PERIOD (CLOCK_SECOND * 5)
 #define SENSOR_READING_RANDOM (CLOCK_SECOND << 4)
 
 struct ctimer batmon_timer;
@@ -94,6 +99,30 @@ process_event_t cc26xx_web_demo_load_config_defaults;
 #define CONFIG_MAGIC      0xCC265002
 
 cc26xx_web_demo_config_t cc26xx_web_demo_config;
+
+
+#define REMOTE_PORT  7777
+#define MAX_MSG_SIZE  100
+// #define set_dest_addr() uip_ipaddr(&remote_addr, 192,168,42,191);
+#define set_dest_addr() uip_ip6addr(&remote_addr, \
+                                    0xBBBB, 0x0000, 0x0000, 0x0000, \
+                                    0x000A, 0x0BFF, 0xFE0C, 0x0D0E);
+// #define set_dest_addr() uip_ip6addr(&remote_addr, \
+//                                     0xFE80, 0x0000, 0x0000, 0x0000, \
+//                                     0x0212, 0x4B00, 0x0D77, 0x5D81);
+
+/*---------------------------------------------------------------------------*/
+#define ADDRESS_CONVERSION_OK       1
+#define ADDRESS_CONVERSION_ERROR    0
+/*---------------------------------------------------------------------------*/
+static struct uip_udp_conn *udp_conn = NULL;
+static struct uip_udp_conn *udp_m_conn = NULL;
+
+static uint8_t buffer[MAX_MSG_SIZE];
+static uint8_t msg_len;
+static uip_ip6addr_t remote_addr;
+/*---------------------------------------------------------------------------*/
+#define IPV6_ADDR_STR_LEN       64
 /*---------------------------------------------------------------------------*/
 /* A cache of sensor values. Updated periodically or upon key press */
 LIST(sensor_list);
@@ -435,12 +464,56 @@ ping_parent(void)
 #endif
 /*---------------------------------------------------------------------------*/
 static void
+get_sync_sensor_readings(void)
+{
+  int value;
+
+  printf("-----------------------------------------\n");
+
+  value = batmon_sensor.value(BATMON_SENSOR_TYPE_TEMP);
+  printf("Bat: Temp=%d C\n", value);
+
+  value = batmon_sensor.value(BATMON_SENSOR_TYPE_VOLT);
+  printf("Bat: Volt=%d mV\n", (value * 125) >> 5);
+
+  //       data_u[0] = value & 0xFF;
+  //       data_u[1] = (value >> 8) & 0xFF;
+  //       data_u[2] = (value >> 16) & 0xFF;
+  //       data_u[3] = (value >> 24) & 0xFF;
+  //       memset(buffer_u, 0, MAX_MSG_SIZE);
+
+  //       /* We need to add a line feed, thus never fill the entire buffer */
+  //       msg_length = 4;
+  //       memcpy(buffer_u, data_u, msg_length);
+
+  //       /* Add a line feed */
+  //       buffer_u[msg_length] = 0x0A;
+  //       msg_length++;
+  // uip_udp_packet_sendto(
+  //         udp_conn, buffer_u, msg_length, cc26xx_web_demo_config.net_uart.remote_address,
+  //         UIP_HTONS(cc26xx_web_demo_config.net_uart.remote_port));
+  //       printf("sending udp packet of %d bytes\n",msg_length);
+
+#if BOARD_SMARTRF06EB
+  SENSORS_ACTIVATE(als_sensor);
+
+  value = als_sensor.value(0);
+  printf("ALS: %d raw\n", value);
+
+  SENSORS_DEACTIVATE(als_sensor);
+#endif
+
+  return;
+}
+/*---------------------------------------------------------------------------*/
+static void
 get_batmon_reading(void *data)
 {
   int value;
   char *buf;
-  clock_time_t next = SENSOR_READING_PERIOD +
-    (random_rand() % SENSOR_READING_RANDOM);
+  clock_time_t next = SENSOR_READING_PERIOD;
+  memset(buffer, 0, MAX_MSG_SIZE);
+
 
   if(batmon_temp_reading.publish) {
     value = batmon_sensor.value(BATMON_SENSOR_TYPE_TEMP);
@@ -450,6 +523,20 @@ get_batmon_reading(void *data)
       buf = batmon_temp_reading.converted;
       memset(buf, 0, CC26XX_WEB_DEMO_CONVERTED_LEN);
       snprintf(buf, CC26XX_WEB_DEMO_CONVERTED_LEN, "%d", value);
+      msg_len = strlen(buf);
+      memcpy(buffer, buf, msg_len);
+      buffer[msg_len] = ' ';
+      msg_len++;
+      buffer[msg_len] = 'C';
+      msg_len++;
+      buffer[msg_len] = 0x0A;
+      msg_len++;
+        uip_udp_packet_sendto(
+    udp_conn, buffer, msg_len, &remote_addr,
+    UIP_HTONS(cc26xx_web_demo_config.net_uart.remote_port));
+        // uip_udp_packet_send(udp_m_conn, buffer, msg_len);
+    printf("sending udp packet of %d bytes\n",msg_len);
+      printf("get_batmon_reading temp %d \n",value);
     }
   }
 
@@ -461,8 +548,25 @@ get_batmon_reading(void *data)
       buf = batmon_volt_reading.converted;
       memset(buf, 0, CC26XX_WEB_DEMO_CONVERTED_LEN);
       snprintf(buf, CC26XX_WEB_DEMO_CONVERTED_LEN, "%d", (value * 125) >> 5);
+      msg_len = strlen(buf);
+      memcpy(buffer, buf, msg_len);
+      buffer[msg_len] = ' ';
+      msg_len++;
+      buffer[msg_len] = 'm';
+      msg_len++;
+      buffer[msg_len] = 'V';
+      msg_len++;
+      buffer[msg_len] = 0x0A;
+      msg_len++;
+        uip_udp_packet_sendto(
+    udp_conn, buffer, msg_len, &remote_addr,
+    UIP_HTONS(cc26xx_web_demo_config.net_uart.remote_port));
+      printf("get_batmon_reading volt %d \n",value);
     }
   }
+
+
+
 
   ctimer_set(&batmon_timer, next, get_batmon_reading, NULL);
 }
@@ -880,6 +984,22 @@ PROCESS_THREAD(cc26xx_web_demo_process, ev, data)
   process_start(&net_uart_process, NULL);
 #endif
 
+//for UDP sending of sensor value
+  set_dest_addr();
+  printf("Setting IP\n");
+  /* Set config defaults */
+  cc26xx_web_demo_ipaddr_sprintf(cc26xx_web_demo_config.net_uart.remote_address,
+                                 NET_UART_IP_ADDR_STRLEN, &remote_addr);
+  cc26xx_web_demo_config.net_uart.remote_port = REMOTE_PORT;
+  udp_conn = udp_new(NULL, UIP_HTONS(0), NULL);
+  // udp_m_conn = udp_broadcast_new(UIP_HTONS(REMOTE_PORT),NULL);
+  udp_bind(udp_conn, UIP_HTONS(REMOTE_PORT));
+
+  if(udp_conn == NULL) {
+    printf("No UDP connection available, exiting the process!\n");
+  }
+
+
   /*
    * Now that processes have set their own config default values, set our
    * own defaults and restore saved config from flash...
@@ -942,7 +1062,7 @@ PROCESS_THREAD(cc26xx_web_demo_process, ev, data)
         cc26xx_web_demo_restore_defaults();
       } else {
         init_sensor_readings();
-
+        get_sync_sensor_readings();
         process_post(PROCESS_BROADCAST, cc26xx_web_demo_publish_event, NULL);
       }
     } else if(ev == httpd_simple_event_new_config) {

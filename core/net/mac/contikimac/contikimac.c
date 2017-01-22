@@ -242,7 +242,7 @@ static volatile uint8_t contikimac_keep_radio_on = 0;
 static volatile unsigned char we_are_sending = 0;
 static volatile unsigned char radio_is_on = 0;
 
-#define DEBUG 0
+#define DEBUG DEBUG_FULL
 #if DEBUG
 #include <stdio.h>
 #define PRINTF(...) printf(__VA_ARGS__)
@@ -360,6 +360,7 @@ powercycle_turn_radio_off(void)
 static void
 powercycle_turn_radio_on(void)
 {
+  // printf("turning radio on\n");
   if(we_are_sending == 0 && we_are_receiving_burst == 0) {
     on();
   }

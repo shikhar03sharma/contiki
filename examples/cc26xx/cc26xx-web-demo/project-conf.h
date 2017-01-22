@@ -40,7 +40,7 @@
 #define CC26XX_WEB_DEMO_CONF_MQTT_CLIENT      1
 #define CC26XX_WEB_DEMO_CONF_6LBR_CLIENT      1
 #define CC26XX_WEB_DEMO_CONF_COAP_SERVER      1
-#define CC26XX_WEB_DEMO_CONF_NET_UART         1
+#define CC26XX_WEB_DEMO_CONF_NET_UART         0
 /*---------------------------------------------------------------------------*/
 /* Enable the ROM bootloader */
 #define ROM_BOOTLOADER_ENABLE                 1
@@ -53,6 +53,21 @@
 #define NBR_TABLE_CONF_MAX_NEIGHBORS          5
 #define UIP_CONF_MAX_ROUTES                   5
 #define UIP_CONF_TCP_MSS                    128
+
+/* configuration for the slipradio/network driver */
+// #undef NETSTACK_CONF_MAC
+// #define NETSTACK_CONF_MAC     nullmac_driver
+
+#undef NETSTACK_CONF_RDC
+/* #define NETSTACK_CONF_RDC     nullrdc_noframer_driver */
+#define NETSTACK_CONF_RDC     contikimac_driver
+#define NETSTACK_CONF_RDC_CHANNEL_CHECK_RATE 4
+// #undef NETSTACK_CONF_NETWORK
+// #define NETSTACK_CONF_NETWORK slipnet_driver
+
+// #undef NETSTACK_CONF_FRAMER
+// #define NETSTACK_CONF_FRAMER no_framer
+
 /*---------------------------------------------------------------------------*/
 #endif /* PROJECT_CONF_H_ */
 /*---------------------------------------------------------------------------*/
